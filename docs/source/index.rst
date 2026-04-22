@@ -12,6 +12,7 @@ Contents
    GUItutorial
    TUItutorial
    inputFile
+   stellarator_generalization
 
 
 General Information
