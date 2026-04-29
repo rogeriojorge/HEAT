@@ -99,6 +99,26 @@ require an OMP mapping, connection length, target strike points, or a validated
 stellarator scrape-off-layer source still need the next provider and mapper
 layers.
 
+Reduced Limiter Demonstrator
+****************************
+
+The first end-to-end stellarator demonstration is implemented in
+``source/stellaratorTraceClass.py``. It provides:
+
+* a cylindrical limiter/PFC proxy with segment-intersection and normal vectors;
+* fixed-step RK4 field-line tracing to target hits;
+* connection length, strike angle, and hit-location diagnostics;
+* deterministic VMEC-edge launch markers with an exponential cross-field
+  weighting;
+* target heat-load binning on ``(phi, Z)`` with total-power normalization.
+
+The private HEAT_work workspace contains the reproducible Landreman-Paul QA demo
+script ``scripts/run_landreman_paul_limiter_demo.py``. It uses the same coil JSON
+and VMEC ``wout`` files, traces a reduced scrape-off launch set to a simple
+cylindrical limiter, writes CSV products, and generates the first presentation
+figures. The current result is a demonstrator for integration and workflow
+acceptance, not a validated divertor design calculation.
+
 Candidate Interfaces
 ********************
 
