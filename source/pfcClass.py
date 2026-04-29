@@ -160,7 +160,7 @@ class shadowKernels:
         r,z,phi = tools.xyz2cyl(targetCtrs[:,0],targetCtrs[:,1],targetCtrs[:,2])
         targetBNorms = MHD.Bfield_pointcloud(ep, r, z, phi, powerDir=None, normal=True)
         bdotnTgt = np.multiply(targetNorms, targetBNorms).sum(1)
-        powerDirTgt = tools.calculatePowerDir(bdotnTgt, ep.g['Bt0'])
+        powerDirTgt = tools.calculatePowerDir(bdotnTgt, MHD.Bt_sign(ep, r, z, phi))
         fwdUseTgt = np.where(powerDirTgt > 0)[0]
         revUseTgt = np.where(powerDirTgt < 0)[0]
 
@@ -444,7 +444,7 @@ class shadowKernels:
         r,z,phi = tools.xyz2cyl(targetCtrs[:,0],targetCtrs[:,1],targetCtrs[:,2])
         targetBNorms = MHD.Bfield_pointcloud(self.ep, r, z, phi, powerDir=None, normal=True)
         bdotnTgt = np.multiply(targetNorms, targetBNorms).sum(1)
-        powerDirTgt = tools.calculatePowerDir(bdotnTgt, self.ep.g['Bt0'])
+        powerDirTgt = tools.calculatePowerDir(bdotnTgt, MHD.Bt_sign(self.ep, r, z, phi))
         fwdUseTgt = np.where(powerDirTgt > 0)[0]
         revUseTgt = np.where(powerDirTgt < 0)[0]
 
@@ -2110,7 +2110,7 @@ class PFC(shadowKernels):
         bdotn = np.multiply(targetNorms, targetBNorms).sum(1)
         #tools.targetsFwdUse = np.where(bdotn > 0)[0]
         #tools.targetsRevUse = np.where(bdotn < 0)[0]
-        powerDir = bdotn * np.sign(self.ep.g['Bt0']) * -1
+        powerDir = bdotn * MHD.Bt_sign(self.ep, r, z, phi) * -1
         tools.targetsFwdUse = np.where(powerDir > 0)[0]
         tools.targetsRevUse = np.where(powerDir < 0)[0]
         NtFwd_use = len(tools.targetsFwdUse)

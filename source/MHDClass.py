@@ -16,6 +16,7 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 import netCDF4
+from vacuumFieldClass import VacuumCoilField
 
 import logging
 log = logging.getLogger(__name__)
@@ -65,7 +66,10 @@ def setupForTerminalUse(gFile=None, shot=None, time=0.0):
         #single geqdsk
         if type(gFile)==str:
             EQmode = MHD.determineEQFiletype(gFile)
-            MHD.ep = EP.equilParams(gFile, EQmode=EQmode, time=time)
+            if EQmode == 'coiljson':
+                MHD.ep = VacuumCoilField.from_json(gFile)
+            else:
+                MHD.ep = EP.equilParams(gFile, EQmode=EQmode, time=time)
         #multiple geqdsks, filenames in a list
         elif type(gFile)==list:
             MHD.ep = []
@@ -180,7 +184,8 @@ class MHD:
 
     def determineEQFiletype(self,file):
         '''
-        tests to see if an EQ file is a netcdf (.nc) or JSON (.json)
+        tests to see if an EQ file is a netcdf (.nc), vacuum coil JSON,
+        or JSON (.json)
 
         if neither, we assume it is a GEQDSK
         '''
@@ -188,7 +193,10 @@ class MHD:
         if extension == '.nc':
             EQmode = 'netcdf'
         elif extension == '.json':
-            EQmode = 'json'
+            if VacuumCoilField.is_coil_json(file):
+                EQmode = 'coiljson'
+            else:
+                EQmode = 'json'
         else:
             EQmode = 'geqdsk'
         return EQmode
@@ -281,7 +289,8 @@ class MHD:
             else:
                 eq = eqList[i]
             #in GUI tmpdir is upload dir.  in TUI, its the machDir
-            oldeqfile = self.tmpDir + eq 
+            oldeqfile = eq if os.path.isabs(eq) else self.tmpDir + eq
+            eqName = os.path.basename(eq)
             timeDir = self.shotPath + self.tsFmt.format(t) +'/'
             if self.shotPath[-1] != '/': self.shotPath += '/'
             self.gFiles.append('g'+self.shotFmt.format(self.shot) + '_'+ self.tsFmt.format(t))
@@ -290,7 +299,21 @@ class MHD:
             #check if this is a netcdf and convert to MAFOT compatible file type (GEQDSK)
             EQmode = self.determineEQFiletype(oldeqfile)
             print("Equilibrium file for timestep "+str(t)+" in "+EQmode+" format")
-            if EQmode != 'geqdsk':
+            if EQmode == 'coiljson':
+                # Vacuum coil JSON files cannot be converted to GEQDSK because
+                # they provide B(x,y,z), not axisymmetric flux coordinates.
+                if len(eqList) == 1:
+                    self.singleEQfile = self.shotPath + eqName
+                    if os.path.abspath(oldeqfile) != os.path.abspath(self.singleEQfile):
+                        shutil.copyfile(oldeqfile, self.singleEQfile)
+                else:
+                    self.singleEQfile = None
+                    neweqfile = timeDir + eqName
+                    self.eqFiles.append(neweqfile)
+                    if os.path.abspath(oldeqfile) != os.path.abspath(neweqfile):
+                        shutil.copyfile(oldeqfile, neweqfile)
+                continue
+            elif EQmode != 'geqdsk':
                 #convert to GEQDSK (for MAFOT)
                 ep = EP.equilParams(oldeqfile, EQmode=EQmode, time=t, 
                                     psiMult=self.psiMult, BtMult=self.BtMult, IpMult=self.IpMult)
@@ -304,12 +327,12 @@ class MHD:
                 #if there is one eq for all ts, save that to the shotDir
                 if len(eqList) == 1:
                     #save the JSON/netcdf into the HEAT tree
-                    self.singleEQfile = self.shotPath + eq
+                    self.singleEQfile = self.shotPath + eqName
                     shutil.copyfile(oldeqfile, self.singleEQfile)
                 #if there is an eq for each ts, save each to the corresponding timeDir
                 else:
                     self.singleEQfile = None
-                    neweqfile = timeDir + eq
+                    neweqfile = timeDir + eqName
                     self.eqFiles.append(neweqfile)
                     shutil.copyfile(oldeqfile, neweqfile)
         return
@@ -345,7 +368,13 @@ class MHD:
         for idx,t in enumerate(self.timesteps):
             timeDir = self.shotPath + self.tsFmt.format(t) +'/'
             #netcdf or json
-            if self.EQmode != 'geqdsk':
+            if self.EQmode == 'coiljson':
+                if self.singleEQfile == None:
+                    eqfile = self.eqFiles[idx]
+                else:
+                    eqfile = self.singleEQfile
+                self.ep[idx] = VacuumCoilField.from_json(eqfile)
+            elif self.EQmode != 'geqdsk':
                 if self.singleEQfile == None:
                     eqfile = self.eqFiles[idx]
                 else:
@@ -383,6 +412,20 @@ class MHD:
         in GEQDSK
 
         """
+        if isinstance(ep, VacuumCoilField):
+            R = np.asarray(R, dtype=float)
+            Z = np.asarray(Z, dtype=float)
+            phi = np.asarray(phi, dtype=float)
+            R, Z, phi = np.broadcast_arrays(R, Z, phi)
+            xyz = np.column_stack((R.ravel()*np.cos(phi.ravel()),
+                                   R.ravel()*np.sin(phi.ravel()),
+                                   Z.ravel()))
+            Bxyz = ep.B_xyz(xyz)
+            if normal:
+                B = np.linalg.norm(Bxyz, axis=1)
+                B[B == 0.0] = 1.0
+                Bxyz = Bxyz / B[:, None]
+            return Bxyz.reshape((-1, 3))
 
         Bt = ep.BtFunc.ev(R,Z)
         BR = ep.BRFunc.ev(R,Z)
@@ -457,16 +500,39 @@ class MHD:
             Bxyz[:,2] /= B
         return Bxyz
 
-    def B_pointclouds(self, ep, R, Z):
+    def B_pointclouds(self, ep, R, Z, phi=None):
         """
         returns a 1D vector of Bp, Bt, Br, Bz, values that correspond to
         input R,Z points
         """
+        if isinstance(ep, VacuumCoilField):
+            if phi is None:
+                phi = np.zeros_like(np.asarray(R, dtype=float))
+            Br, Bt, Bz = ep.B_cyl(R, Z, phi)
+            Bp = np.sqrt(Br**2+Bz**2)
+            return Bp, Bt, Br, Bz
+
         Br = ep.BRFunc.ev(R,Z)
         Bz = ep.BZFunc.ev(R,Z)
         Bt = ep.BtFunc.ev(R,Z)
         Bp = np.sqrt(Br**2+Bz**2)
         return Bp, Bt, Br, Bz
+
+    def Bt_sign(self, ep, R=None, Z=None, phi=None):
+        """
+        Return the toroidal field sign for EFIT or vacuum coil fields.
+
+        EFIT equilibria use the scalar sign from Bt0.  Vacuum coil fields are
+        fully 3D, so their toroidal sign is evaluated at the requested points.
+        """
+        if isinstance(ep, VacuumCoilField):
+            if R is None or Z is None or phi is None:
+                return 1.0
+            _, Bt, _ = ep.B_cyl(R, Z, phi)
+            sign = np.sign(Bt)
+            sign = np.where(sign == 0.0, 1.0, sign)
+            return sign
+        return np.sign(ep.g['Bt0'])
 
 
     def write_B_pointclouds(self,centers,Bp,Bt,Br,Bz,dataPath, tag=None):

@@ -440,7 +440,8 @@ class engineObj():
 
         #determine if the EQ are GEQDSKs or IMAS formatted JSON / NetCDF
         #and get the timesteps accordingly
-        self.MHD.EQmode = self.MHD.determineEQFiletype(eqList[0]) #assume we are not mixing and matching EQ types
+        eq0 = eqList[0] if os.path.isabs(eqList[0]) else self.tmpDir + eqList[0]
+        self.MHD.EQmode = self.MHD.determineEQFiletype(eq0) #assume we are not mixing and matching EQ types
         if self.MHD.EQmode == 'geqdsk':
             self.timesteps = self.MHD.getGEQDSKtimesteps(eqList)
         elif self.MHD.EQmode == 'json':
@@ -448,6 +449,8 @@ class engineObj():
             for eq in eqList:
                 data = self.IO.readJSON(self.tmpDir + eq)
                 self.timesteps = np.append( self.timesteps, np.round(np.array(data['equilibrium']['time']), 8) )
+        elif self.MHD.EQmode == 'coiljson':
+            self.timesteps = np.arange(len(eqList), dtype=float)
 
         #make tree branch for this shot
         self.setupTime(self.timesteps, shot, clobberFlag=False)
@@ -463,14 +466,25 @@ class engineObj():
 
         self.MHD.setTypes()
 
-        print('psiSep0 = {:f}'.format(self.MHD.ep[0].g['psiSep']))
-        print('psiAxis0 = {:f}'.format(self.MHD.ep[0].g['psiAxis']))
-        print('Nlcfs0: {:f}'.format(self.MHD.ep[0].g['Nlcfs']))
-        print('length Rlcfs0: {:f}'.format(len(self.MHD.ep[0].g['lcfs'][:,0])))
-        log.info('psiSep0 = {:f}'.format(self.MHD.ep[0].g['psiSep']))
-        log.info('psiAxis0 = {:f}'.format(self.MHD.ep[0].g['psiAxis']))
-        log.info('Nlcfs0: {:f}'.format(self.MHD.ep[0].g['Nlcfs']))
-        if self.plasma3D.plasma3Dmask:
+        if self.MHD.EQmode == 'coiljson':
+            print('Vacuum coil field loaded from {:s}'.format(self.MHD.ep[0].source_file))
+            print('Number of coils: {:d}'.format(self.MHD.ep[0].n_coils))
+            print('Number of coil segments: {:d}'.format(self.MHD.ep[0].n_segments))
+            log.info('Vacuum coil field loaded from {:s}'.format(self.MHD.ep[0].source_file))
+            log.info('Number of coils: {:d}'.format(self.MHD.ep[0].n_coils))
+            log.info('Number of coil segments: {:d}'.format(self.MHD.ep[0].n_segments))
+        else:
+            print('psiSep0 = {:f}'.format(self.MHD.ep[0].g['psiSep']))
+            print('psiAxis0 = {:f}'.format(self.MHD.ep[0].g['psiAxis']))
+            print('Nlcfs0: {:f}'.format(self.MHD.ep[0].g['Nlcfs']))
+            print('length Rlcfs0: {:f}'.format(len(self.MHD.ep[0].g['lcfs'][:,0])))
+            log.info('psiSep0 = {:f}'.format(self.MHD.ep[0].g['psiSep']))
+            log.info('psiAxis0 = {:f}'.format(self.MHD.ep[0].g['psiAxis']))
+            log.info('Nlcfs0: {:f}'.format(self.MHD.ep[0].g['Nlcfs']))
+        if self.MHD.EQmode == 'coiljson':
+            print('Solving with vacuum coil field (no EFIT flux coordinates)')
+            log.info('Solving with vacuum coil field (no EFIT flux coordinates)')
+        elif self.plasma3D.plasma3Dmask:
             print('Solving for 3D plasmas with MAFOT')
             log.info('Solving for 3D plasmas with MAFOT')
         else:
@@ -1554,7 +1568,8 @@ class engineObj():
         PFC.Bmag[:,1] = PFC.centers[:,1] # Y
         PFC.Bmag[:,2] = PFC.centers[:,2] # Z
         PFC.Bmag[:,3] = np.sqrt(PFC.Bxyz[:,0]**2+PFC.Bxyz[:,1]**2+PFC.Bxyz[:,2]**2)
-        PFC.Bsign = np.sign(PFC.ep.g['Bt0'])
+        R,Z,phi = tools.xyz2cyl(PFC.centers[:,0],PFC.centers[:,1],PFC.centers[:,2])
+        PFC.Bsign = self.MHD.Bt_sign(PFC.ep, R, Z, phi)
         return
 
     def BtraceMultiple(self, t, data=None, boundbox=True):
@@ -2113,7 +2128,7 @@ class engineObj():
                 r,z,phi = tools.xyz2cyl(PFC.centers[:,0],PFC.centers[:,1],PFC.centers[:,2])
                 PFC.BNorms = self.MHD.Bfield_pointcloud(PFC.ep, r, z, phi, powerDir=None, normal=True)
                 PFC.bdotn = np.multiply(PFC.norms, PFC.BNorms).sum(1)
-                PFC.powerDir = np.sign(PFC.bdotn)*np.sign(PFC.ep.g['Bt0'])*-1.0
+                PFC.powerDir = np.sign(PFC.bdotn)*self.MHD.Bt_sign(PFC.ep, r, z, phi)*-1.0
                 #powerDir can also be calculated using dot product of phi
                 #PFC.bdotphi = np.multiply(PFC.BNorms, PFC.phiVec).sum(1)
                 #PFC.powerDir = np.sign(PFC.bdotn)*np.sign(PFC.bdotphi)*-1.0

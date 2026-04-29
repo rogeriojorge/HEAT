@@ -62,6 +62,27 @@ while replacing tokamak-specific layer definitions with explicit source regions,
 connection length, incidence angle, and imported or reduced stellarator heat-load
 models.
 
+Vacuum Coil Fields
+******************
+
+As an early stellarator path, HEAT can read ESSOS and SIMSOPT Biot-Savart coil
+JSON files directly through ``source/vacuumFieldClass.py``. These files define
+Fourier coils and currents, so HEAT can evaluate the vacuum magnetic field in
+Cartesian coordinates on either side of any user-defined LCFS without first
+generating an EFIT, VMEC extension, or other external field file.
+
+This mode currently provides:
+
+* direct ``B(x,y,z)`` evaluation from coil geometry;
+* cylindrical component conversion for diagnostics;
+* a lightweight fixed-step RK4 field-line tracer for vacuum-field experiments;
+* ``MHDClass`` detection of these files as ``coiljson`` inputs.
+
+Because this is a coil-only vacuum field, it does not provide flux coordinates,
+plasma current, pressure, or a physical LCFS. Heat-flux models that require
+``psi`` or an outboard-midplane mapping still need an equilibrium provider or a
+separate source/load model.
+
 Candidate Interfaces
 ********************
 

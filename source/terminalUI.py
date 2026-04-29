@@ -402,7 +402,8 @@ class TUI():
         """
         #initialize MHD
         self.ENG.MHD.tmpDir = tmpDir
-        self.ENG.MHD.EQmode = self.ENG.MHD.determineEQFiletype(eqFiles[0])
+        eq0 = eqFiles[0] if os.path.isabs(eqFiles[0]) else tmpDir + eqFiles[0]
+        self.ENG.MHD.EQmode = self.ENG.MHD.determineEQFiletype(eq0)
         self.ENG.MHD.getGEQDSK(ts, eqFiles)
         self.ENG.MHD.makeEFITobjects()
         self.ENG.MHD.psiSepLimiter = None
