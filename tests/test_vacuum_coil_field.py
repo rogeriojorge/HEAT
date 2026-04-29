@@ -115,6 +115,41 @@ class VacuumCoilFieldTest(unittest.TestCase):
         self.assertEqual(trace.shape, (6, 3))
         self.assertGreater(trace[-1, 2], trace[0, 2])
 
+    def test_trace_poincare_detects_toroidal_plane_hits(self):
+        field = AnalyticToroidalField()
+
+        hits = field.trace_poincare(
+            [1.0, 0.0, 0.0],
+            target_phi=np.pi/2.0,
+            period=np.pi/2.0,
+            n_hits=3,
+            step_m=0.05,
+            max_steps=200,
+        )
+        phi = np.arctan2(hits[:, 1], hits[:, 0])
+        nearest = np.pi/2.0 + np.round((phi - np.pi/2.0)/(np.pi/2.0))*(np.pi/2.0)
+
+        self.assertEqual(hits.shape, (3, 3))
+        self.assertTrue(np.allclose(np.sqrt(hits[:, 0]**2 + hits[:, 1]**2), 1.0, atol=1.0e-3))
+        self.assertTrue(np.allclose(phi - nearest, 0.0, atol=2.0e-3))
+
+
+class AnalyticToroidalField(VacuumCoilField):
+    def __init__(self):
+        pass
+
+    def B_xyz(self, points, chunk_size=256):
+        pts = np.asarray(points, dtype=float)
+        single = pts.ndim == 1
+        pts = np.atleast_2d(pts)
+        R = np.sqrt(pts[:, 0]**2 + pts[:, 1]**2)
+        B = np.zeros_like(pts)
+        B[:, 0] = -pts[:, 1] / R
+        B[:, 1] = pts[:, 0] / R
+        if single:
+            return B[0]
+        return B
+
 
 if __name__ == "__main__":
     unittest.main()

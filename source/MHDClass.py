@@ -17,11 +17,12 @@ from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
 import netCDF4
 from vacuumFieldClass import VacuumCoilField
+from vmecEquilibriumClass import VmecEquilibrium
 
 import logging
 log = logging.getLogger(__name__)
 
-def setupForTerminalUse(gFile=None, shot=None, time=0.0):
+def setupForTerminalUse(gFile=None, shot=None, time=0.0, vmecFile=None):
     """
     Sets up an MHD object so that it can be used from python console
     without running HEAT.  This is convenient when a user wants to load
@@ -67,7 +68,9 @@ def setupForTerminalUse(gFile=None, shot=None, time=0.0):
         if type(gFile)==str:
             EQmode = MHD.determineEQFiletype(gFile)
             if EQmode == 'coiljson':
-                MHD.ep = VacuumCoilField.from_json(gFile)
+                MHD.ep = VacuumCoilField.from_json(gFile, vmec_file=vmecFile)
+            elif EQmode == 'vmec':
+                MHD.ep = VmecEquilibrium(gFile)
             else:
                 MHD.ep = EP.equilParams(gFile, EQmode=EQmode, time=time)
         #multiple geqdsks, filenames in a list
@@ -140,6 +143,7 @@ class MHD:
                             'BtMult',
                             'IpMult',
                             'BtraceFile',
+                            'VMECFile',
                             ]
 
         return
@@ -191,7 +195,10 @@ class MHD:
         '''
         extension = os.path.splitext(file)[1]
         if extension == '.nc':
-            EQmode = 'netcdf'
+            if VmecEquilibrium.is_vmec_wout(file):
+                EQmode = 'vmec'
+            else:
+                EQmode = 'netcdf'
         elif extension == '.json':
             if VacuumCoilField.is_coil_json(file):
                 EQmode = 'coiljson'
@@ -281,6 +288,17 @@ class MHD:
         self.timesteps = ts
         self.gFiles = []
         self.eqFiles = []
+        if self.shotPath[-1] != '/':
+            self.shotPath += '/'
+        self.vmecFile = None
+        if getattr(self, 'VMECFile', None) not in [None, '', 'None']:
+            oldvmecfile = self.VMECFile
+            if not os.path.isabs(oldvmecfile):
+                oldvmecfile = self.tmpDir + oldvmecfile
+            vmecName = os.path.basename(oldvmecfile)
+            self.vmecFile = self.shotPath + vmecName
+            if os.path.abspath(oldvmecfile) != os.path.abspath(self.vmecFile):
+                shutil.copyfile(oldvmecfile, self.vmecFile)
         for i,t in enumerate(ts):
             #if all the EQ are in a single file, account for it here (GUI mode)
             #otherwise, use the EQ assigned to each timestep (TUI mode)
@@ -292,7 +310,6 @@ class MHD:
             oldeqfile = eq if os.path.isabs(eq) else self.tmpDir + eq
             eqName = os.path.basename(eq)
             timeDir = self.shotPath + self.tsFmt.format(t) +'/'
-            if self.shotPath[-1] != '/': self.shotPath += '/'
             self.gFiles.append('g'+self.shotFmt.format(self.shot) + '_'+ self.tsFmt.format(t))
             newgfile = timeDir + self.gFiles[-1]
             
@@ -302,6 +319,18 @@ class MHD:
             if EQmode == 'coiljson':
                 # Vacuum coil JSON files cannot be converted to GEQDSK because
                 # they provide B(x,y,z), not axisymmetric flux coordinates.
+                if len(eqList) == 1:
+                    self.singleEQfile = self.shotPath + eqName
+                    if os.path.abspath(oldeqfile) != os.path.abspath(self.singleEQfile):
+                        shutil.copyfile(oldeqfile, self.singleEQfile)
+                else:
+                    self.singleEQfile = None
+                    neweqfile = timeDir + eqName
+                    self.eqFiles.append(neweqfile)
+                    if os.path.abspath(oldeqfile) != os.path.abspath(neweqfile):
+                        shutil.copyfile(oldeqfile, neweqfile)
+                continue
+            elif EQmode == 'vmec':
                 if len(eqList) == 1:
                     self.singleEQfile = self.shotPath + eqName
                     if os.path.abspath(oldeqfile) != os.path.abspath(self.singleEQfile):
@@ -373,7 +402,13 @@ class MHD:
                     eqfile = self.eqFiles[idx]
                 else:
                     eqfile = self.singleEQfile
-                self.ep[idx] = VacuumCoilField.from_json(eqfile)
+                self.ep[idx] = VacuumCoilField.from_json(eqfile, vmec_file=self.vmecFile)
+            elif self.EQmode == 'vmec':
+                if self.singleEQfile == None:
+                    eqfile = self.eqFiles[idx]
+                else:
+                    eqfile = self.singleEQfile
+                self.ep[idx] = VmecEquilibrium(eqfile)
             elif self.EQmode != 'geqdsk':
                 if self.singleEQfile == None:
                     eqfile = self.eqFiles[idx]
@@ -651,6 +686,9 @@ class MHD:
         """
         use = np.where(PFC.shadowed_mask == 0)[0]
         xyz = PFC.centers[use]
+        if hasattr(PFC.ep, 'estimate_flux_label_xyz'):
+            PFC.psimin = PFC.ep.estimate_flux_label_xyz(xyz)[0]
+            return
         R,Z,phi = tools.xyz2cyl(xyz[:,0],xyz[:,1],xyz[:,2])
         PFC.psimin = PFC.ep.psiFunc.ev(R,Z) #psi_N
         return
@@ -660,6 +698,8 @@ class MHD:
         Returns psi from EFIT equilibrium rather than from 3D trace.  Does not
         use MAFOT
         """
+        if hasattr(ep, 'estimate_flux_label_xyz'):
+            return ep.estimate_flux_label_xyz(xyz)[0]
         R,Z,phi = tools.xyz2cyl(xyz[:,0],xyz[:,1],xyz[:,2])
         psi = ep.psiFunc.ev(R,Z)
         return psi

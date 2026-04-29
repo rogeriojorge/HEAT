@@ -24,13 +24,16 @@ class VacuumCoilField:
     kind = "vacuum_coil_field"
 
     def __init__(self, gamma, gamma_dash, currents, source_file=None, metadata=None,
-                 singularity_tol=1.0e-10):
+                 singularity_tol=1.0e-10, vmec=None):
         self.gamma = np.asarray(gamma, dtype=float)
         self.gamma_dash = np.asarray(gamma_dash, dtype=float)
         self.currents = np.asarray(currents, dtype=float)
         self.source_file = source_file
         self.metadata = metadata or {}
         self.singularity_tol = singularity_tol
+        self.vmec = vmec
+        if vmec is not None:
+            self.g = vmec.g
 
         if self.gamma.ndim != 3 or self.gamma.shape[-1] != 3:
             raise ValueError("gamma must have shape (n_coils, n_segments, 3)")
@@ -40,7 +43,7 @@ class VacuumCoilField:
             raise ValueError("currents length must match number of coils")
 
     @classmethod
-    def from_json(cls, filename):
+    def from_json(cls, filename, vmec_file=None):
         with open(filename, "r") as f:
             data = json.load(f)
 
@@ -53,8 +56,13 @@ class VacuumCoilField:
                 "Unsupported vacuum coil JSON. Expected ESSOS dofs_curves/"
                 "dofs_currents or SIMSOPT BiotSavart JSON."
             )
+        vmec = None
+        if vmec_file is not None:
+            from vmecEquilibriumClass import VmecEquilibrium
+            vmec = VmecEquilibrium(vmec_file)
+            metadata["vmec_file"] = vmec_file
         return cls(gamma, gamma_dash, currents, source_file=filename,
-                   metadata=metadata)
+                   metadata=metadata, vmec=vmec)
 
     @staticmethod
     def is_coil_json(filename):
@@ -134,13 +142,63 @@ class VacuumCoilField:
         h = float(step_m) * np.sign(direction)
 
         for i in range(n_steps):
-            y = trace[i]
-            k1 = self._bhat(y)
-            k2 = self._bhat(y + 0.5 * h * k1)
-            k3 = self._bhat(y + 0.5 * h * k2)
-            k4 = self._bhat(y + h * k3)
-            trace[i + 1] = y + h * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0
+            trace[i + 1] = self._rk4_step(trace[i], h)
         return trace
+
+    def trace_poincare(self, start_xyz, target_phi=0.0, period=2.0*np.pi,
+                       n_hits=10, step_m=0.02, max_steps=100000,
+                       direction=1.0):
+        """
+        Trace a field line and return intersections with toroidal planes.
+
+        ``target_phi`` is the toroidal plane in radians.  ``period`` can be set
+        to ``2*pi/nfp`` for stellarator field-period symmetry.  The returned
+        array has shape ``(n_hits, 3)`` in Cartesian meters.
+        """
+        y = np.asarray(start_xyz, dtype=float)
+        h = float(step_m) * np.sign(direction)
+        target_phi = float(target_phi)
+        period = float(period)
+        hits = []
+        prev_phi = np.arctan2(y[1], y[0])
+        initial_plane = _nearest_plane(prev_phi, target_phi, period)
+
+        for _ in range(int(max_steps)):
+            y_next = self._rk4_step(y, h)
+            phi_next = _unwrap_near(np.arctan2(y_next[1], y_next[0]), prev_phi)
+            crossings = _plane_crossings(prev_phi, phi_next, target_phi, period)
+            for plane in crossings:
+                if len(hits) == 0 and abs(plane - initial_plane) < 1.0e-12:
+                    continue
+                alpha = (plane - prev_phi) / (phi_next - prev_phi)
+                if 1.0e-12 <= alpha <= 1.0:
+                    hits.append(y + alpha*(y_next - y))
+                    if len(hits) >= n_hits:
+                        return np.asarray(hits)
+            y = y_next
+            prev_phi = phi_next
+        return np.asarray(hits)
+
+    def estimate_flux_label_xyz(self, xyz, s_samples=101, theta_samples=361):
+        if self.vmec is None:
+            raise ValueError("No companion VMEC equilibrium is attached to this field")
+        return self.vmec.estimate_flux_label_xyz(
+            xyz,
+            s_samples=s_samples,
+            theta_samples=theta_samples,
+        )
+
+    def fieldline_surface_drift(self, s_values, **kwargs):
+        if self.vmec is None:
+            raise ValueError("No companion VMEC equilibrium is attached to this field")
+        return self.vmec.fieldline_surface_drift(self, s_values, **kwargs)
+
+    def _rk4_step(self, y, h):
+        k1 = self._bhat(y)
+        k2 = self._bhat(y + 0.5 * h * k1)
+        k3 = self._bhat(y + 0.5 * h * k2)
+        k4 = self._bhat(y + h * k3)
+        return y + h * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0
 
     def _bhat(self, xyz):
         B = self.B_xyz(xyz)
@@ -286,3 +344,31 @@ def _rotate_points(points, phi, flip):
         )
     return np.asarray(points) @ rotmat
 
+
+def _unwrap_near(phi, reference):
+    while phi - reference > np.pi:
+        phi -= 2.0*np.pi
+    while phi - reference < -np.pi:
+        phi += 2.0*np.pi
+    return phi
+
+
+def _nearest_plane(phi, target_phi, period):
+    return target_phi + np.round((phi - target_phi) / period) * period
+
+
+def _plane_crossings(phi0, phi1, target_phi, period):
+    if phi0 == phi1:
+        return []
+    lo = min(phi0, phi1)
+    hi = max(phi0, phi1)
+    k0 = int(np.ceil((lo - target_phi) / period))
+    k1 = int(np.floor((hi - target_phi) / period))
+    crossings = []
+    for k in range(k0, k1 + 1):
+        plane = target_phi + k*period
+        if lo <= plane <= hi:
+            crossings.append(plane)
+    if phi1 < phi0:
+        crossings.reverse()
+    return crossings

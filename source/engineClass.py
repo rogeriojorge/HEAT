@@ -407,6 +407,7 @@ class engineObj():
     def getMHDInputsForGUI(self,shot=None,traceLength=None,dpinit=None,
                      eqList=None,eqData=None,plasma3Dmask=None,
                      psiMult=1.0, BtMult=1.0, IpMult=1.0,
+                     VMECFile=None,
                      ):
         """
         Get the mhd inputs.  only used in GUI mode
@@ -429,6 +430,8 @@ class engineObj():
         if eqList is not None:
             self.MHD.writeEQdata(eqList, eqData)
             self.MHD.eqList = eqList
+        if VMECFile is not None:
+            self.MHD.VMECFile = VMECFile
 
         if plasma3Dmask is not None:
             self.plasma3D.plasma3Dmask = plasma3Dmask
@@ -450,6 +453,8 @@ class engineObj():
                 data = self.IO.readJSON(self.tmpDir + eq)
                 self.timesteps = np.append( self.timesteps, np.round(np.array(data['equilibrium']['time']), 8) )
         elif self.MHD.EQmode == 'coiljson':
+            self.timesteps = np.arange(len(eqList), dtype=float)
+        elif self.MHD.EQmode == 'vmec':
             self.timesteps = np.arange(len(eqList), dtype=float)
 
         #make tree branch for this shot
@@ -473,6 +478,17 @@ class engineObj():
             log.info('Vacuum coil field loaded from {:s}'.format(self.MHD.ep[0].source_file))
             log.info('Number of coils: {:d}'.format(self.MHD.ep[0].n_coils))
             log.info('Number of coil segments: {:d}'.format(self.MHD.ep[0].n_segments))
+            if getattr(self.MHD.ep[0], 'vmec', None) is not None:
+                print('Companion VMEC loaded from {:s}'.format(self.MHD.ep[0].vmec.source_file))
+                print('psiSep0 = {:f}'.format(self.MHD.ep[0].g['psiSep']))
+                print('Ip0 = {:e}'.format(self.MHD.ep[0].g['Ip']))
+                print('pressure_axis0 = {:e}'.format(self.MHD.ep[0].g['pressure_axis']))
+                print('Nlcfs0: {:f}'.format(self.MHD.ep[0].g['Nlcfs']))
+                log.info('Companion VMEC loaded from {:s}'.format(self.MHD.ep[0].vmec.source_file))
+                log.info('psiSep0 = {:f}'.format(self.MHD.ep[0].g['psiSep']))
+                log.info('Ip0 = {:e}'.format(self.MHD.ep[0].g['Ip']))
+                log.info('pressure_axis0 = {:e}'.format(self.MHD.ep[0].g['pressure_axis']))
+                log.info('Nlcfs0: {:f}'.format(self.MHD.ep[0].g['Nlcfs']))
         else:
             print('psiSep0 = {:f}'.format(self.MHD.ep[0].g['psiSep']))
             print('psiAxis0 = {:f}'.format(self.MHD.ep[0].g['psiAxis']))
@@ -482,8 +498,12 @@ class engineObj():
             log.info('psiAxis0 = {:f}'.format(self.MHD.ep[0].g['psiAxis']))
             log.info('Nlcfs0: {:f}'.format(self.MHD.ep[0].g['Nlcfs']))
         if self.MHD.EQmode == 'coiljson':
-            print('Solving with vacuum coil field (no EFIT flux coordinates)')
-            log.info('Solving with vacuum coil field (no EFIT flux coordinates)')
+            if getattr(self.MHD.ep[0], 'vmec', None) is not None:
+                print('Solving with vacuum coil field and companion VMEC surfaces')
+                log.info('Solving with vacuum coil field and companion VMEC surfaces')
+            else:
+                print('Solving with vacuum coil field (no EFIT flux coordinates)')
+                log.info('Solving with vacuum coil field (no EFIT flux coordinates)')
         elif self.plasma3D.plasma3Dmask:
             print('Solving for 3D plasmas with MAFOT')
             log.info('Solving for 3D plasmas with MAFOT')
@@ -4019,7 +4039,8 @@ class engineObj():
                     'dpinit': self.MHD.dpinit,
                     'psiMult':self.MHD.psiMult,
                     'BtMult':self.MHD.BtMult,
-                    'IpMult':self.MHD.IpMult,                    
+                    'IpMult':self.MHD.IpMult,
+                    'VMECFile':getattr(self.MHD, 'VMECFile', None),
                     'gridRes': self.CAD.gridRes,
                     'hfMode': self.HF.hfMode,
                     'lqEich': self.HF.lqCN,
@@ -4109,6 +4130,7 @@ class engineObj():
                     'psiMult':self.MHD.psiMult,
                     'BtMult':self.MHD.BtMult,
                     'IpMult':self.MHD.IpMult,
+                    'VMECFile':getattr(self.MHD, 'VMECFile', None),
                     'gridRes': self.CAD.gridRes,
                     'hfMode': self.HF.hfMode,
                     'lqEich': self.HF.lqCN,

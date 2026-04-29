@@ -76,12 +76,28 @@ This mode currently provides:
 * direct ``B(x,y,z)`` evaluation from coil geometry;
 * cylindrical component conversion for diagnostics;
 * a lightweight fixed-step RK4 field-line tracer for vacuum-field experiments;
+* Poincare-plane hit detection for coil-field surface checks;
 * ``MHDClass`` detection of these files as ``coiljson`` inputs.
 
-Because this is a coil-only vacuum field, it does not provide flux coordinates,
-plasma current, pressure, or a physical LCFS. Heat-flux models that require
-``psi`` or an outboard-midplane mapping still need an equilibrium provider or a
-separate source/load model.
+The coil field can also be paired with a companion VMEC ``wout`` file through
+``source/vmecEquilibriumClass.py``. In that mode the coil JSON remains the
+magnetic-field provider everywhere, while VMEC supplies normalized toroidal flux
+``s``, pressure and iota profiles, plasma current, and the physical plasma
+boundary/LCFS up to the VMEC edge. This is the current path for the
+Landreman-Paul QA vacuum case using the ESSOS/SIMSOPT coil JSON and
+``wout_LandremanPaul2021_QA_lowres.nc``.
+
+The VMEC reader also provides a nearest-surface flux-label diagnostic and a
+coil-field surface-preservation check. For the local Landreman-Paul QA files,
+eight Poincare hits on ``s = 0.25, 0.50, 0.75, 1.00`` stayed within
+``max_abs_s_drift <= 0.015`` and ``max_surface_distance_m <= 0.0011`` in the
+current fixed-step diagnostic. This validates that the vacuum coils reproduce
+the VMEC magnetic surfaces well enough for the next HEAT integration step.
+
+This is still not a complete stellarator heat-flux model. Heat-flux models that
+require an OMP mapping, connection length, target strike points, or a validated
+stellarator scrape-off-layer source still need the next provider and mapper
+layers.
 
 Candidate Interfaces
 ********************
